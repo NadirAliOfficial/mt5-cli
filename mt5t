@@ -65,6 +65,9 @@ done
   exit 2
 }
 [[ -x "$WINE" ]] || { echo "MT5 wine runtime missing at $WINE"; exit 2; }
+# A missing .set used to be skipped silently, which runs the EA on its defaults
+# with no optimization and reports nothing useful.
+[[ -n "$setfile" && ! -f "$setfile" ]] && { echo "set file not found: $setfile"; exit 2; }
 
 name="${src:t:r}"
 
@@ -110,7 +113,7 @@ ini="$ROOT/config/mt5t.ini"
   echo "ReplaceReport=1"
   echo "ShutdownTerminal=1"
   echo "Visual=0"
-  if [[ -n "$setfile" && -f "$setfile" ]]; then
+  if [[ -n "$setfile" ]]; then
     echo ""
     echo "[TesterInputs]"
     if [[ -n "$optimize" ]]; then
