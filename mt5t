@@ -5,13 +5,15 @@
 # usage:
 #   mt5t <file.mq5|Name.ex5> --symbol XAUUSD --from 2025.01.01 --to 2025.06.30 \
 #        [--period M1] [--model 4] [--deposit 10000] [--leverage 100] \
-#        [--set params.set] [--spread 0] [--keep] [--json] [--show]
+#        [--set params.set] [--spread 0] [--keep] [--json] [--headless]
 #        [--login N --password P --server S]
 #
 #   --model  0 every tick | 1 OHLC M1 | 2 open prices | 3 math | 4 real ticks (default)
 #   --spread 0 uses the spread recorded in the tick data
 #   --keep   leave the compiled ex5 and the raw HTML report in place
-#   --show   let the MT5 window appear (default is no window at all)
+#   --headless  hide the MT5 window. NOTE: terminal64.exe will not launch
+#               without the mac graphics driver, so the tester needs the window.
+#               Compiling (mt5c) is fully headless.
 #
 # Every figure printed comes from the MT5 report file. Nothing is recomputed here.
 
@@ -26,7 +28,7 @@ HERE="${0:A:h}"
 
 src=""; symbol=""; from=""; to=""
 period="M1"; model="4"; deposit="10000"; leverage="100"
-setfile=""; spread="0"; keep=0; asjson=0; show=0
+setfile=""; spread="0"; keep=0; asjson=0; show=1
 login="${MT5_LOGIN:-}"; password="${MT5_PASSWORD:-}"; server="${MT5_SERVER:-}"
 
 while [[ $# -gt 0 ]]; do
@@ -45,6 +47,7 @@ while [[ $# -gt 0 ]]; do
     --spread)   spread="$2"; shift 2 ;;
     --keep)     keep=1; shift ;;
     --json)     asjson=1; shift ;;
+    --headless) show=0; shift ;;
     --show)     show=1; shift ;;
     -*)         echo "unknown option: $1"; exit 2 ;;
     *)          src="$1"; shift ;;
@@ -110,12 +113,26 @@ ini="$ROOT/config/mt5t.ini"
 
 echo "testing $name  $symbol $period  $from .. $to  model=$model"
 
-#--- 3. run the terminal headless -------------------------------------------
+#--- 3. run the terminal -----------------------------------------------------
 cd "$ROOT"
-gfx=()
-[[ $show -eq 0 ]] && gfx=(WINEDLLOVERRIDES="winemac.drv=d")
-WINEPREFIX="$PREFIX" WINEDEBUG=-all $gfx "$WINE" terminal64.exe \
-  /portable /config:"config\\mt5t.ini" >/dev/null 2>&1 || true
+
+# MetaEditor's wine process lingers for a moment after compiling. If terminal64
+# starts while it is still up, MT5 treats it as an existing instance and exits
+# immediately with code 0 having done nothing.
+for i in {1..30}; do
+  pgrep -f "MetaEditor64.exe" >/dev/null || break
+  sleep 1
+done
+sleep 2
+
+runlog="$ROOT/reports/$name.runlog"
+if [[ $show -eq 0 ]]; then
+  WINEPREFIX="$PREFIX" WINEDEBUG=-all WINEDLLOVERRIDES="winemac.drv=d" \
+    "$WINE" terminal64.exe /portable /config:"config\\mt5t.ini" >"$runlog" 2>&1 || true
+else
+  WINEPREFIX="$PREFIX" WINEDEBUG=-all \
+    "$WINE" terminal64.exe /portable /config:"config\\mt5t.ini" >"$runlog" 2>&1 || true
+fi
 
 #--- 4. wait for MT5 to write its report -------------------------------------
 out=""
