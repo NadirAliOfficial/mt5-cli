@@ -185,6 +185,32 @@ Results come back ranked, showing only the columns that actually varied:
 > **Don't hand-roll a sweep as a shell loop over single runs.** It launches the terminal
 > once per variant, opens a window every time, and covers a fraction of the grid.
 
+
+### Optimizing for something MetaTrader does not measure
+
+MT5 ranks by balance, profit factor, payoff, drawdown, recovery or Sharpe. If you
+need something else — win rate, or win rate subject to being profitable — add an
+`OnTester()` to the EA and optimize with `--criterion 6`:
+
+```mql5
+double OnTester()
+{
+   double trades = TesterStatistics(STAT_TRADES);
+   if(trades < 20) return 0.01;
+
+   double pf = TesterStatistics(STAT_PROFIT_FACTOR);
+   if(pf <= 1.0) return pf;                    // 0..1 = unprofitable
+
+   double wins = TesterStatistics(STAT_PROFIT_TRADES);
+   return 100.0 + (wins / trades) * 100.0;     // profitable: rank by win rate
+}
+```
+
+**Never return 0 from `OnTester()`.** MetaTrader drops those passes from the report
+entirely, so an optimization where everything scores 0 comes back with a header row
+and no data, and nothing tells you why. Return a small graded value instead — a
+losing pass is still information.
+
 ### Comparing two builds
 
 ```bash
