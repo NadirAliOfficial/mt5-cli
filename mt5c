@@ -1,0 +1,44 @@
+#!/bin/zsh
+# mt5c — compile an MQL5/MQL4 source file from the terminal on macOS.
+# usage: mt5c path/to/File.mq5 [--keep]
+#   --keep  leave the copy inside the MT5 Experts folder
+
+set -e
+
+MT5_APP="/Applications/MetaTrader 5.app"
+PREFIX="$HOME/Library/Application Support/net.metaquotes.wine.metatrader5"
+WINE="$MT5_APP/Contents/SharedSupport/wine/bin/wine64"
+ROOT="$PREFIX/drive_c/Program Files/MetaTrader 5"
+EXPERTS="$ROOT/MQL5/Experts"
+
+src="$1"
+[[ -z "$src" ]] && { echo "usage: mt5c <file.mq5> [--keep]"; exit 2; }
+[[ -f "$src" ]] || { echo "not found: $src"; exit 2; }
+src="${src:A}"
+[[ -x "$WINE" ]] || { echo "MT5 wine runtime missing at $WINE"; exit 2; }
+
+name="${src:t:r}"
+work="$EXPERTS/$name.mq5"
+cp "$src" "$work"
+
+cd "$ROOT"
+WINEPREFIX="$PREFIX" WINEDEBUG=-all WINEDLLOVERRIDES="winemac.drv=d" "$WINE" MetaEditor64.exe \
+  /portable /compile:"MQL5\\Experts\\$name.mq5" /log >/dev/null 2>&1 || true
+
+log="$EXPERTS/$name.log"
+for i in {1..30}; do [[ -f "$log" ]] && break; sleep 1; done
+[[ -f "$log" ]] || { echo "no build log produced"; exit 1; }
+
+out=$(iconv -f UTF-16LE -t UTF-8 "$log" 2>/dev/null | tr -d '\r')
+print -r -- "$out" | grep -viE 'information: (including|generating code|compiling|code generated)' | sed '/^$/d'
+
+if [[ -f "$EXPERTS/$name.ex5" ]]; then
+  cp "$EXPERTS/$name.ex5" "${src:h}/$name.ex5"
+  echo "built -> ${src:h}/$name.ex5"
+fi
+
+if [[ "$2" != "--keep" ]]; then
+  rm -f "$work" "$log" "$EXPERTS/$name.ex5"
+fi
+
+print -r -- "$out" | grep -q "0 errors" || exit 1

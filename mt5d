@@ -1,0 +1,103 @@
+#!/bin/zsh
+# mt5d — download tick and bar history for a symbol from the terminal, headless.
+#
+# usage:
+#   mt5d --symbol XAUUSD --from 2025.01.01 --to 2025.07.01 [--timeframe M1]
+#        [--no-bars] [--timeout 600]
+#
+# Runs an MQL5 script inside MetaTrader that pulls the range from the broker,
+# so the tester can then run on real ticks instead of generated ones.
+
+set -e
+
+MT5_APP="/Applications/MetaTrader 5.app"
+PREFIX="$HOME/Library/Application Support/net.metaquotes.wine.metatrader5"
+WINE="$MT5_APP/Contents/SharedSupport/wine/bin/wine64"
+ROOT="$PREFIX/drive_c/Program Files/MetaTrader 5"
+FILES="$ROOT/MQL5/Files"
+SCRIPTS="$ROOT/MQL5/Scripts"
+HERE="${0:A:h}"
+
+symbol=""; from=""; to=""; tf="M1"; bars=1; timeout=600
+login="${MT5_LOGIN:-}"; password="${MT5_PASSWORD:-}"; server="${MT5_SERVER:-}"
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --symbol)    symbol="$2"; shift 2 ;;
+    --from)      from="$2";   shift 2 ;;
+    --to)        to="$2";     shift 2 ;;
+    --timeframe) tf="$2";     shift 2 ;;
+    --timeout)   timeout="$2";shift 2 ;;
+    --login)     login="$2";  shift 2 ;;
+    --password)  password="$2"; shift 2 ;;
+    --server)    server="$2"; shift 2 ;;
+    --no-bars)   bars=0; shift ;;
+    *)           echo "unknown option: $1"; exit 2 ;;
+  esac
+done
+
+[[ -z "$symbol" || -z "$from" || -z "$to" ]] && {
+  echo "usage: mt5d --symbol SYM --from YYYY.MM.DD --to YYYY.MM.DD [--timeframe M1] [--no-bars]"
+  exit 2
+}
+[[ -x "$WINE" ]] || { echo "MT5 wine runtime missing at $WINE"; exit 2; }
+
+#--- compile the fetch script into the terminal ------------------------------
+mkdir -p "$FILES" "$SCRIPTS"
+cp "$HERE/scripts/mt5d_fetch.mq5" "$SCRIPTS/mt5d_fetch.mq5"
+
+cd "$ROOT"
+WINEPREFIX="$PREFIX" WINEDEBUG=-all WINEDLLOVERRIDES="winemac.drv=d" "$WINE" MetaEditor64.exe \
+  /portable /compile:"MQL5\\Scripts\\mt5d_fetch.mq5" /log >/dev/null 2>&1 || true
+
+if [[ ! -f "$SCRIPTS/mt5d_fetch.ex5" ]]; then
+  echo "could not compile the fetch script:"
+  [[ -f "$SCRIPTS/mt5d_fetch.log" ]] && iconv -f UTF-16LE -t UTF-8 "$SCRIPTS/mt5d_fetch.log" | tr -d '\r' | grep -i error
+  exit 1
+fi
+
+#--- hand the request to the script ------------------------------------------
+rm -f "$FILES/mt5d_result.txt"
+{
+  echo "symbol=$symbol"
+  echo "from=$from 00:00:00"
+  echo "to=$to 00:00:00"
+  echo "timeframe=$tf"
+  echo "bars=$bars"
+  echo "timeout=$timeout"
+} > "$FILES/mt5d.txt"
+
+ini="$ROOT/config/mt5d.ini"
+{
+  if [[ -n "$login" ]]; then
+    echo "[Common]"
+    echo "Login=$login"
+    [[ -n "$password" ]] && echo "Password=$password"
+    [[ -n "$server" ]]   && echo "Server=$server"
+    echo ""
+  fi
+  echo "[StartUp]"
+  echo "Script=mt5d_fetch"
+  echo "Symbol=$symbol"
+  echo "Period=$tf"
+} > "$ini"
+chmod 600 "$ini"
+
+echo "downloading $symbol  $from .. $to  ($tf)"
+
+WINEPREFIX="$PREFIX" WINEDEBUG=-all WINEDLLOVERRIDES="winemac.drv=d" "$WINE" terminal64.exe \
+  /portable /config:"config\\mt5d.ini" >/dev/null 2>&1 || true
+
+#--- report what the terminal actually got -----------------------------------
+res="$FILES/mt5d_result.txt"
+if [[ ! -f "$res" ]]; then
+  echo "no result written. the terminal may not have connected to a server."
+  exit 1
+fi
+
+status=$(head -1 "$res" | tr -d '\r')
+tail -n +2 "$res" | tr -d '\r' | sed 's/^/  /'
+
+[[ "$status" == "STATUS=OK" ]] || { echo; echo "download incomplete"; exit 1; }
+echo
+echo "done — rerun mt5t with --model 4 for a real tick test"

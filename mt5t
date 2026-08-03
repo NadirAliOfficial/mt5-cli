@@ -1,0 +1,152 @@
+#!/bin/zsh
+# mt5t — run an MT5 strategy test from the terminal on macOS and print the
+#        numbers straight out of MetaTrader's own report.
+#
+# usage:
+#   mt5t <file.mq5|Name.ex5> --symbol XAUUSD --from 2025.01.01 --to 2025.06.30 \
+#        [--period M1] [--model 4] [--deposit 10000] [--leverage 100] \
+#        [--set params.set] [--spread 0] [--keep] [--json] [--show]
+#        [--login N --password P --server S]
+#
+#   --model  0 every tick | 1 OHLC M1 | 2 open prices | 3 math | 4 real ticks (default)
+#   --spread 0 uses the spread recorded in the tick data
+#   --keep   leave the compiled ex5 and the raw HTML report in place
+#   --show   let the MT5 window appear (default is no window at all)
+#
+# Every figure printed comes from the MT5 report file. Nothing is recomputed here.
+
+set -e
+
+MT5_APP="/Applications/MetaTrader 5.app"
+PREFIX="$HOME/Library/Application Support/net.metaquotes.wine.metatrader5"
+WINE="$MT5_APP/Contents/SharedSupport/wine/bin/wine64"
+ROOT="$PREFIX/drive_c/Program Files/MetaTrader 5"
+EXPERTS="$ROOT/MQL5/Experts"
+HERE="${0:A:h}"
+
+src=""; symbol=""; from=""; to=""
+period="M1"; model="4"; deposit="10000"; leverage="100"
+setfile=""; spread="0"; keep=0; asjson=0; show=0
+login="${MT5_LOGIN:-}"; password="${MT5_PASSWORD:-}"; server="${MT5_SERVER:-}"
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --login)    login="$2";  shift 2 ;;
+    --password) password="$2"; shift 2 ;;
+    --server)   server="$2"; shift 2 ;;
+    --symbol)   symbol="$2"; shift 2 ;;
+    --period)   period="$2"; shift 2 ;;
+    --from)     from="$2";   shift 2 ;;
+    --to)       to="$2";     shift 2 ;;
+    --model)    model="$2";  shift 2 ;;
+    --deposit)  deposit="$2";shift 2 ;;
+    --leverage) leverage="$2"; shift 2 ;;
+    --set)      setfile="$2"; shift 2 ;;
+    --spread)   spread="$2"; shift 2 ;;
+    --keep)     keep=1; shift ;;
+    --json)     asjson=1; shift ;;
+    --show)     show=1; shift ;;
+    -*)         echo "unknown option: $1"; exit 2 ;;
+    *)          src="$1"; shift ;;
+  esac
+done
+
+[[ -z "$src" || -z "$symbol" || -z "$from" || -z "$to" ]] && {
+  echo "usage: mt5t <file.mq5|Name.ex5> --symbol SYM --from YYYY.MM.DD --to YYYY.MM.DD [options]"
+  exit 2
+}
+[[ -x "$WINE" ]] || { echo "MT5 wine runtime missing at $WINE"; exit 2; }
+
+name="${src:t:r}"
+
+#--- 1. compile if source was given -----------------------------------------
+if [[ "$src" == *.mq5 ]]; then
+  [[ -f "$src" ]] || { echo "not found: $src"; exit 2; }
+  echo "compiling $name ..."
+  "$HERE/mt5c" "$src" --keep || { echo "compile failed, test aborted"; exit 1; }
+else
+  [[ -f "$EXPERTS/$name.ex5" ]] || { echo "not found in Experts: $name.ex5"; exit 2; }
+fi
+
+#--- 2. build the tester config ---------------------------------------------
+mkdir -p "$ROOT/reports"
+report="reports\\$name"
+rm -f "$ROOT/reports/$name.htm" "$ROOT/reports/$name.html"
+
+ini="$ROOT/config/mt5t.ini"
+{
+  if [[ -n "$login" ]]; then
+    echo "[Common]"
+    echo "Login=$login"
+    [[ -n "$password" ]] && echo "Password=$password"
+    [[ -n "$server" ]]   && echo "Server=$server"
+    echo ""
+  fi
+  echo "[Tester]"
+  echo "Expert=$name.ex5"
+  echo "Symbol=$symbol"
+  echo "Period=$period"
+  echo "Model=$model"
+  echo "ExecutionMode=0"
+  echo "Optimization=0"
+  echo "ForwardMode=0"
+  echo "FromDate=$from"
+  echo "ToDate=$to"
+  echo "Deposit=$deposit"
+  echo "Currency=USD"
+  echo "Leverage=1:$leverage"
+  echo "Spread=$spread"
+  echo "Report=$report"
+  echo "ReplaceReport=1"
+  echo "ShutdownTerminal=1"
+  echo "Visual=0"
+  if [[ -n "$setfile" && -f "$setfile" ]]; then
+    echo ""
+    echo "[TesterInputs]"
+    # .set lines look like  Name=value||min||step||max||flag  — keep the value only
+    sed -e 's/||.*$//' -e '/^;/d' -e '/^$/d' "$setfile"
+  fi
+} > "$ini"
+
+echo "testing $name  $symbol $period  $from .. $to  model=$model"
+
+#--- 3. run the terminal headless -------------------------------------------
+cd "$ROOT"
+gfx=()
+[[ $show -eq 0 ]] && gfx=(WINEDLLOVERRIDES="winemac.drv=d")
+WINEPREFIX="$PREFIX" WINEDEBUG=-all $gfx "$WINE" terminal64.exe \
+  /portable /config:"config\\mt5t.ini" >/dev/null 2>&1 || true
+
+#--- 4. wait for MT5 to write its report -------------------------------------
+out=""
+for cand in "$ROOT/reports/$name.htm" "$ROOT/reports/$name.html" \
+            "$ROOT/$name.htm" "$ROOT/$name.html"; do
+  [[ -f "$cand" ]] && out="$cand"
+done
+
+if [[ -z "$out" ]]; then
+  tlog=$(ls -t "$ROOT/logs"/*.log 2>/dev/null | head -1)
+  if [[ -n "$tlog" ]] && (iconv -f UTF-16LE -t UTF-8 "$tlog" 2>/dev/null || cat "$tlog") \
+       | tail -40 | grep -qiE 'authorization .* failed|invalid account'; then
+    echo "no report — MetaTrader has no working account, so it quits before testing."
+    echo "log in once in the MT5 window, or pass --login/--password/--server."
+    exit 1
+  fi
+  echo "no report produced. last tester log:"
+  ls -t "$ROOT/Tester/logs"/*.log 2>/dev/null | head -1 | while read -r l; do
+    iconv -f UTF-16LE -t UTF-8 "$l" 2>/dev/null | tail -25 || tail -25 "$l"
+  done
+  exit 1
+fi
+
+#--- 5. print what MetaTrader reported ---------------------------------------
+MT5T_JSON=$asjson python3 "$HERE/mt5t_parse.py" "$out"
+rc=$?
+
+if [[ $keep -eq 0 ]]; then
+  rm -f "$EXPERTS/$name.ex5" "$EXPERTS/$name.mq5" "$EXPERTS/$name.log"
+else
+  echo "report: $out"
+fi
+
+exit $rc
