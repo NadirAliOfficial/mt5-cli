@@ -90,9 +90,83 @@ def extract(doc):
     return found
 
 
+def optimization_rows(doc):
+    """MT5 writes optimization results as SpreadsheetML: one <Row> per pass."""
+    rows = []
+    for raw in re.findall(r"<Row[^>]*>(.*?)</Row>", doc, re.S | re.I):
+        cells_ = []
+        for cell in re.findall(r"<Cell[^>]*>(.*?)</Cell>", raw, re.S | re.I):
+            txt = re.sub(r"<[^>]+>", " ", cell)
+            cells_.append(" ".join(html.unescape(txt).replace("\xa0", " ").split()))
+        if cells_:
+            rows.append(cells_)
+    return rows
+
+
+def show_optimization(doc):
+    rows = optimization_rows(doc)
+    if len(rows) < 2:
+        return False
+
+    header = rows[0]
+    body = [r for r in rows[1:] if len(r) >= len(header) // 2]
+    if not body:
+        return False
+
+    def col(*names):
+        for i, h in enumerate(header):
+            if any(n.lower() == h.lower() for n in names):
+                return i
+        return None
+
+    i_pf = col("Profit Factor")
+    i_pr = col("Profit", "Result")
+    i_tr = col("Trades", "Total Trades")
+    i_dd = col("Equity DD %", "Equity Drawdown Maximal", "Drawdown")
+
+    def f(row, i):
+        if i is None or i >= len(row):
+            return 0.0
+        m = re.search(r"-?[\d ]*\d[\d ]*\.?\d*", row[i].replace(" ", " "))
+        return float(m.group().replace(" ", "")) if m else 0.0
+
+    body.sort(key=lambda r: f(r, i_pf), reverse=True)
+
+    varying = [
+        i for i, h in enumerate(header)
+        if i not in (i_pf, i_pr, i_tr, i_dd)
+        and len({r[i] for r in body if i < len(r)}) > 1
+    ]
+
+    print()
+    print(f"  MT5 optimization — {len(body)} passes, best profit factor first")
+    print()
+    head = ["profit", "PF", "trades", "eqDD%"] + [header[i] for i in varying]
+    print("  " + "  ".join(f"{h:>12}" for h in head))
+    print("  " + "-" * (14 * len(head)))
+    for row in body[:25]:
+        vals = [f"{f(row, i_pr):>12.0f}", f"{f(row, i_pf):>12.2f}",
+                f"{f(row, i_tr):>12.0f}", f"{f(row, i_dd):>12.2f}"]
+        vals += [f"{row[i] if i < len(row) else '':>12}" for i in varying]
+        print("  " + "  ".join(vals))
+    print()
+
+    best = f(body[0], i_pf)
+    if best < 1.0:
+        print("  No pass reached a profit factor of 1.0. Every parameter combination")
+        print("  tested loses money on this data, so the entry itself has no edge.")
+        print()
+    return True
+
+
 def main():
     path = sys.argv[1]
     doc = read(path)
+
+    if path.lower().endswith(".xml") or "<Worksheet" in doc:
+        if show_optimization(doc):
+            return 0
+
     data = extract(doc)
 
     if not data:

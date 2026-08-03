@@ -97,6 +97,45 @@ using real ones, so these figures do not represent real execution.
 That distinction decides whether a scalper's backtest means anything, so it is never
 left for you to notice on your own.
 
+### Optimizing — one launch, every combination
+
+Give any input a `||start||step||stop||Y` range and pass `--optimize`. MetaTrader
+runs the whole grid itself, in parallel across its local agents, in a **single**
+launch:
+
+```bash
+mt5t MyEA.mq5 --symbol XAUUSD --from 2026.07.06 --to 2026.07.31 \
+      --set sweep.set --optimize 1 --criterion 1
+```
+
+`sweep.set`:
+
+```
+MaxSpreadPips=0.5||0.4||0.4||1.6||Y
+MinAtrPips=1.0||1.0||1.5||4.0||Y
+DistancePips=2.0||2.0||1.5||5.0||Y
+RewardRatio=1.3||1.3||0.7||2.7||Y
+FastEmaPeriod=8
+```
+
+That is 324 passes from five lines. Results come back ranked, and only the columns
+that actually vary are shown:
+
+```
+  MT5 optimization — 324 passes, best profit factor first
+
+        profit            PF        trades         eqDD%  MaxSpreadPips    RewardRatio
+  ----------------------------------------------------------------------------------
+           412          1.34           806          4.12            0.4            2.7
+```
+
+`--optimize` takes `1` for the slow complete algorithm or `2` for genetic.
+`--criterion` selects what MT5 ranks by: `0` balance, `1` profit factor,
+`2` expected payoff, `3` drawdown, `4` recovery factor, `5` Sharpe.
+
+Do not hand-roll a sweep as a shell loop over single runs. It launches the terminal
+once per variant, covers a fraction of the grid, and takes far longer.
+
 ### Comparing two builds
 
 ```bash
