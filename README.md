@@ -2,14 +2,14 @@
 
 # mt5-cli
 
-**Compile, backtest and optimize MetaTrader 5 Expert Advisors from the macOS terminal.**
+**Compile, backtest and optimize MetaTrader 5 Expert Advisors from the terminal (macOS & Windows).**
 
-No Windows VM. No Docker. No separate Wine install.
-It drives the Wine runtime already bundled inside the official MetaTrader 5.app.
+On macOS: No Windows VM. No Docker. Drives the Wine runtime bundled in MetaTrader 5.app.  
+On Windows: Native execution calling `MetaEditor64.exe` and `terminal64.exe` directly via PowerShell.
 
-[![platform](https://img.shields.io/badge/platform-macOS-000000?style=flat-square&logo=apple&logoColor=white)](https://www.metatrader5.com/en/download)
+[![platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows-000000?style=flat-square&logo=apple&logoColor=white)](https://www.metatrader5.com/en/download)
 [![language](https://img.shields.io/badge/MQL5-blue?style=flat-square)](https://www.mql5.com/en/docs)
-[![shell](https://img.shields.io/badge/zsh-89e051?style=flat-square&logo=gnubash&logoColor=black)](#)
+[![shell](https://img.shields.io/badge/shell-zsh%20%7C%20PowerShell-89e051?style=flat-square)](#)
 [![license](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE)
 
 </div>
@@ -37,28 +37,31 @@ testing MyEA  XAUUSD M1  2026.07.06 .. 2026.07.31  model=4
 
 Three commands:
 
-| | |
-|---|---|
-| **`mt5c`** | compile an `.mq5`, print real errors only, non-zero exit on failure |
-| **`mt5t`** | compile → run the strategy tester → print MetaTrader's own report |
-| **`mt5d`** | pull tick and bar history for a date range |
+| macOS | Windows (PowerShell) | Description |
+|---|---|---|
+| **`mt5c`** | **`mt5c.ps1`** | compile an `.mq5`, print real errors only, non-zero exit on failure |
+| **`mt5t`** | **`mt5t.ps1`** | compile → run the strategy tester → print MetaTrader's own report |
+| **`mt5d`** | **`mt5d.ps1`** | pull tick and bar history for a date range |
 
 ---
 
 ## Why
 
-Everything MetaTrader does well lives behind a Windows GUI. On a Mac that usually means
+Everything MetaTrader does well lives behind a GUI. On a Mac that usually means
 a virtual machine, a Docker image, or clicking through MetaEditor and the Strategy Tester
-tab for every single change.
+tab for every single change. On Windows, automation previously required manual GUI interaction.
 
-But the official **MetaTrader 5.app already ships a complete Wine runtime**, with
-`MetaEditor64.exe` and `terminal64.exe` sitting inside it. These scripts talk to those
-binaries directly. Nothing extra is installed, and the app keeps working normally.
+- **On macOS**, the official **MetaTrader 5.app ships a complete Wine runtime** with
+`MetaEditor64.exe` and `terminal64.exe` inside. These scripts talk to those binaries directly.
+- **On Windows**, the PowerShell scripts in `windows/` invoke `MetaEditor64.exe` and `terminal64.exe`
+natively without Wine, auto-detecting the MT5 installation and `%APPDATA%` data directory.
 
 **Every number printed is parsed out of the report MetaTrader writes itself.** Nothing is
 recalculated, estimated or simulated here. If a figure appears, MT5 produced it.
 
 ## Install
+
+### macOS
 
 ```bash
 git clone https://github.com/NadirAliOfficial/mt5-cli.git
@@ -71,6 +74,24 @@ ln -s "$PWD"/mt5{c,t,d} /usr/local/bin/
 
 **Requires** MetaTrader 5 at `/Applications/MetaTrader 5.app`, Python 3, and one working
 trading account (a free demo is fine — see [Accounts](#accounts)).
+
+### Windows (PowerShell)
+
+```powershell
+git clone https://github.com/NadirAliOfficial/mt5-cli.git
+cd mt5-cli\windows
+
+# compile
+.\mt5c.ps1 C:\path\to\MyEA.mq5
+
+# backtest
+.\mt5t.ps1 C:\path\to\MyEA.mq5 --symbol XAUUSD --from 2026.01.01 --to 2026.07.31
+
+# download history
+.\mt5d.ps1 --symbol XAUUSD --from 2026.01.01 --to 2026.08.01 --timeframe M1
+```
+
+**Requires** MetaTrader 5 installed (e.g. at `C:\Program Files\MetaTrader 5`), Python 3 on `PATH`, and PowerShell 5.1+.
 
 ---
 
@@ -257,13 +278,16 @@ lands in your shell history. The generated config is written `chmod 600`.
 ## How it works
 
 ```
-mt5c ──▶ MetaEditor64.exe /portable /compile:…   ──▶ parses the UTF-16 build log
-mt5t ──▶ terminal64.exe   /portable /config:…    ──▶ parses the HTML / SpreadsheetML report
-mt5d ──▶ terminal64.exe   [StartUp] Script=…     ──▶ CopyTicksRange + CopyRates
-```
+macOS:
+mt5c  ──▶ wine64 MetaEditor64.exe /portable /compile:… ──▶ parses UTF-16 build log
+mt5t  ──▶ wine64 terminal64.exe   /portable /config:…  ──▶ parses HTML/XML report
+mt5d  ──▶ wine64 terminal64.exe   [StartUp] Script=…   ──▶ CopyTicksRange + CopyRates
 
-Everything runs against the app's own Wine prefix in portable mode, so your normal
-MetaTrader install is untouched.
+Windows:
+mt5c.ps1 ──▶ MetaEditor64.exe /compile:… /log (/avx2) ──▶ parses UTF-16 build log
+mt5t.ps1 ──▶ terminal64.exe   /config:…               ──▶ parses HTML/XML report
+mt5d.ps1 ──▶ terminal64.exe   [StartUp] Script=…      ──▶ CopyTicksRange + CopyRates
+```
 
 ## Known limits
 
