@@ -279,8 +279,15 @@ if (-not $out) {
 # ─── 6. print what MetaTrader reported ──────────────────────────────────
 $env:MT5T_JSON = if ($asjson) { '1' } else { '0' }
 $parseScript = "$REPO\mt5t_parse.py"
-# On Windows, Python 3 is typically 'python' not 'python3'
-$pythonCmd = if (Get-Command python3 -ErrorAction SilentlyContinue) { 'python3' } else { 'python' }
+
+# Find genuine Python 3 (avoid WindowsApps store stub)
+$pythonCmd = 'python'
+$realPy = Get-Command python.exe, py.exe, python3.exe -ErrorAction SilentlyContinue |
+    Where-Object { $_.Source -notlike "*WindowsApps*" } | Select-Object -First 1
+if ($realPy) {
+    $pythonCmd = $realPy.Source
+}
+
 & $pythonCmd $parseScript $out
 $parseExit = $LASTEXITCODE
 
